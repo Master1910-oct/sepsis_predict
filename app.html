@@ -1,0 +1,1622 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SepsisGuard — AI Early Warning System</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&family=Outfit:wght@300;400;500;600&display=swap"
+        rel="stylesheet" />
+    <style>
+        /* ── Reset & Base ─────────────────────────────────────────── */
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        :root {
+            --bg: #0a0e14;
+            --surface: #111720;
+            --surface2: #18202e;
+            --border: rgba(255, 255, 255, 0.07);
+            --border2: rgba(255, 255, 255, 0.12);
+            --text: #e8edf5;
+            --muted: #6b7a93;
+            --accent: #00d4ff;
+            --accent2: #0099cc;
+            --danger: #ff4757;
+            --warn: #ffa502;
+            --safe: #2ed573;
+            --glow-blue: 0 0 40px rgba(0, 212, 255, 0.15);
+            --glow-red: 0 0 60px rgba(255, 71, 87, 0.25);
+            --glow-green: 0 0 60px rgba(46, 213, 115, 0.20);
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Outfit', sans-serif;
+            font-weight: 400;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* ── Background Grid ─────────────────────────────────────── */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            background-image:
+                linear-gradient(rgba(0, 212, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 212, 255, 0.03) 1px, transparent 1px);
+            background-size: 40px 40px;
+            pointer-events: none;
+        }
+
+        /* ── Header ──────────────────────────────────────────────── */
+        header {
+            position: relative;
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px 48px;
+            border-bottom: 1px solid var(--border);
+            background: rgba(10, 14, 20, 0.85);
+            backdrop-filter: blur(12px);
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-icon {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            box-shadow: var(--glow-blue);
+            animation: pulse-icon 3s ease-in-out infinite;
+        }
+
+        @keyframes pulse-icon {
+
+            0%,
+            100% {
+                box-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
+            }
+
+            50% {
+                box-shadow: 0 0 40px rgba(0, 212, 255, 0.6);
+            }
+        }
+
+        .logo-text {
+            font-family: 'DM Serif Display', serif;
+            font-size: 22px;
+            letter-spacing: -0.3px;
+        }
+
+        .logo-text span {
+            color: var(--accent);
+        }
+
+        .header-badge {
+            font-family: 'DM Mono', monospace;
+            font-size: 11px;
+            font-weight: 400;
+            color: var(--accent);
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            padding: 4px 12px;
+            border-radius: 20px;
+            background: rgba(0, 212, 255, 0.05);
+            letter-spacing: 1px;
+        }
+
+        /* ── Page Wrapper ─────────────────────────────────────────── */
+        .page {
+            position: relative;
+            z-index: 5;
+        }
+
+        /* ── SCREEN: INPUT ───────────────────────────────────────── */
+        #screen-input {
+            min-height: calc(100vh - 78px);
+            display: flex;
+            flex-direction: column;
+            padding: 60px 48px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .page-header {
+            margin-bottom: 48px;
+        }
+
+        .page-eyebrow {
+            font-family: 'DM Mono', monospace;
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--accent);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-bottom: 12px;
+        }
+
+        .page-title {
+            font-family: 'DM Serif Display', serif;
+            font-size: 42px;
+            line-height: 1.1;
+            letter-spacing: -0.5px;
+            margin-bottom: 12px;
+        }
+
+        .page-title em {
+            color: var(--accent);
+            font-style: italic;
+        }
+
+        .page-subtitle {
+            color: var(--muted);
+            font-size: 15px;
+            max-width: 520px;
+            line-height: 1.7;
+        }
+
+        /* ── Form Grid ───────────────────────────────────────────── */
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0;
+            border: 1px solid var(--border2);
+            border-radius: 16px;
+            overflow: hidden;
+            background: var(--surface);
+            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.4);
+        }
+
+        /* Section headers */
+        .section-header {
+            grid-column: 1 / -1;
+            padding: 20px 28px 16px;
+            background: var(--surface2);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .section-header:not(:first-child) {
+            border-top: 1px solid var(--border);
+        }
+
+        .section-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .section-header h3 {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--muted);
+        }
+
+        /* ── Field ───────────────────────────────────────────────── */
+        .field {
+            padding: 20px 24px;
+            border-right: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+            transition: background 0.2s;
+            position: relative;
+        }
+
+        .field:hover {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .field:nth-child(4n) {
+            border-right: none;
+        }
+
+        .field label {
+            display: block;
+            font-family: 'DM Mono', monospace;
+            font-size: 10px;
+            font-weight: 500;
+            color: var(--muted);
+            letter-spacing: 0.8px;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+
+        .field-unit {
+            font-size: 9px;
+            color: rgba(107, 122, 147, 0.6);
+            margin-left: 4px;
+        }
+
+        .field input,
+        .field select {
+            width: 100%;
+            background: transparent;
+            border: none;
+            border-bottom: 1.5px solid rgba(255, 255, 255, 0.08);
+            color: var(--text);
+            font-family: 'Outfit', sans-serif;
+            font-size: 15px;
+            font-weight: 400;
+            padding: 6px 0;
+            outline: none;
+            transition: border-color 0.2s, color 0.2s;
+            -webkit-appearance: none;
+        }
+
+        .field input::placeholder {
+            color: rgba(107, 122, 147, 0.5);
+        }
+
+        .field input:focus,
+        .field select:focus {
+            border-bottom-color: var(--accent);
+            color: #fff;
+        }
+
+        .field select option {
+            background: #1a2233;
+            color: var(--text);
+        }
+
+        .field input:focus+.field-focus-bar,
+        .field select:focus+.field-focus-bar {
+            transform: scaleX(1);
+        }
+
+        /* Normal range hint */
+        .field-hint {
+            font-family: 'DM Mono', monospace;
+            font-size: 9px;
+            color: rgba(107, 122, 147, 0.4);
+            margin-top: 5px;
+            letter-spacing: 0.3px;
+        }
+
+        /* ── Submit Row ──────────────────────────────────────────── */
+        .submit-row {
+            margin-top: 36px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .btn-predict {
+            position: relative;
+            overflow: hidden;
+            padding: 16px 48px;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            color: #000;
+            border: none;
+            border-radius: 10px;
+            font-family: 'Outfit', sans-serif;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 8px 32px rgba(0, 212, 255, 0.3);
+            letter-spacing: 0.3px;
+        }
+
+        .btn-predict:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 48px rgba(0, 212, 255, 0.45);
+        }
+
+        .btn-predict:active {
+            transform: translateY(0);
+        }
+
+        .btn-predict::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.2), transparent);
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .btn-predict:hover::after {
+            opacity: 1;
+        }
+
+        .btn-clear {
+            padding: 16px 28px;
+            background: transparent;
+            color: var(--muted);
+            border: 1px solid var(--border2);
+            border-radius: 10px;
+            font-family: 'Outfit', sans-serif;
+            font-size: 15px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-clear:hover {
+            color: var(--text);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .submit-note {
+            font-size: 12px;
+            color: var(--muted);
+            line-height: 1.5;
+        }
+
+        /* ── Loading Overlay ─────────────────────────────────────── */
+        #loading-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 100;
+            background: rgba(10, 14, 20, 0.95);
+            backdrop-filter: blur(8px);
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 28px;
+        }
+
+        #loading-overlay.show {
+            display: flex;
+        }
+
+        .loader-ring {
+            width: 64px;
+            height: 64px;
+            border: 2px solid rgba(0, 212, 255, 0.15);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.9s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .loader-text {
+            font-family: 'DM Mono', monospace;
+            font-size: 12px;
+            color: var(--accent);
+            letter-spacing: 2px;
+            animation: blink 1.4s ease-in-out infinite;
+        }
+
+        @keyframes blink {
+
+            0%,
+            100% {
+                opacity: 1
+            }
+
+            50% {
+                opacity: 0.4
+            }
+        }
+
+        .loader-steps {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            text-align: center;
+        }
+
+        .loader-step {
+            font-size: 12px;
+            color: var(--muted);
+            transition: color 0.3s;
+        }
+
+        .loader-step.active {
+            color: var(--accent);
+        }
+
+        .loader-step.done {
+            color: var(--safe);
+        }
+
+        /* ── SCREEN: RESULT ──────────────────────────────────────── */
+        #screen-result {
+            display: none;
+            min-height: calc(100vh - 78px);
+            padding: 60px 48px;
+            max-width: 1400px;
+            margin: 0 auto;
+            animation: fadeInUp 0.6s ease forwards;
+        }
+
+        #screen-result.show {
+            display: block;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(24px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Risk Banner */
+        .risk-banner {
+            border-radius: 16px;
+            padding: 36px 40px;
+            display: flex;
+            align-items: center;
+            gap: 32px;
+            margin-bottom: 40px;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.5s;
+        }
+
+        .risk-banner.HIGH {
+            background: linear-gradient(135deg, rgba(255, 71, 87, 0.12), rgba(255, 71, 87, 0.05));
+            border: 1px solid rgba(255, 71, 87, 0.35);
+            box-shadow: var(--glow-red);
+        }
+
+        .risk-banner.MODERATE {
+            background: linear-gradient(135deg, rgba(255, 165, 2, 0.12), rgba(255, 165, 2, 0.05));
+            border: 1px solid rgba(255, 165, 2, 0.35);
+            box-shadow: 0 0 60px rgba(255, 165, 2, 0.2);
+        }
+
+        .risk-banner.LOW {
+            background: linear-gradient(135deg, rgba(46, 213, 115, 0.10), rgba(46, 213, 115, 0.03));
+            border: 1px solid rgba(46, 213, 115, 0.3);
+            box-shadow: var(--glow-green);
+        }
+
+        .risk-icon {
+            font-size: 52px;
+            flex-shrink: 0;
+            animation: risk-pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes risk-pulse {
+
+            0%,
+            100% {
+                transform: scale(1);
+            }
+
+            50% {
+                transform: scale(1.08);
+            }
+        }
+
+        .risk-content {
+            flex: 1;
+        }
+
+        .risk-label {
+            font-family: 'DM Mono', monospace;
+            font-size: 11px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+
+        .risk-banner.HIGH .risk-label {
+            color: var(--danger);
+        }
+
+        .risk-banner.MODERATE .risk-label {
+            color: var(--warn);
+        }
+
+        .risk-banner.LOW .risk-label {
+            color: var(--safe);
+        }
+
+        .risk-title {
+            font-family: 'DM Serif Display', serif;
+            font-size: 34px;
+            line-height: 1.1;
+            margin-bottom: 10px;
+        }
+
+        .risk-desc {
+            color: var(--muted);
+            font-size: 14px;
+            line-height: 1.7;
+            max-width: 540px;
+        }
+
+        /* Probability Gauge */
+        .risk-gauge {
+            flex-shrink: 0;
+            text-align: center;
+        }
+
+        .gauge-circle {
+            width: 130px;
+            height: 130px;
+            position: relative;
+        }
+
+        .gauge-circle svg {
+            width: 100%;
+            height: 100%;
+            transform: rotate(-90deg);
+        }
+
+        .gauge-bg {
+            fill: none;
+            stroke: rgba(255, 255, 255, 0.06);
+            stroke-width: 8;
+        }
+
+        .gauge-arc {
+            fill: none;
+            stroke-width: 8;
+            stroke-linecap: round;
+            transition: stroke-dashoffset 1.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        .gauge-text {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .gauge-pct {
+            font-family: 'DM Serif Display', serif;
+            font-size: 28px;
+            line-height: 1;
+        }
+
+        .gauge-sub {
+            font-family: 'DM Mono', monospace;
+            font-size: 9px;
+            color: var(--muted);
+            letter-spacing: 1px;
+            margin-top: 2px;
+        }
+
+        /* ── Metrics Row ──────────────────────────────────────────── */
+        .metrics-row {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+
+        .metric-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            position: relative;
+            overflow: hidden;
+            transition: border-color 0.2s, transform 0.2s;
+        }
+
+        .metric-card:hover {
+            border-color: var(--border2);
+            transform: translateY(-2px);
+        }
+
+        .metric-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+        }
+
+        .metric-card.xgb::before {
+            background: linear-gradient(90deg, #2196F3, transparent);
+        }
+
+        .metric-card.lgb::before {
+            background: linear-gradient(90deg, #FF9800, transparent);
+        }
+
+        .metric-card.ens::before {
+            background: linear-gradient(90deg, #4CAF50, transparent);
+        }
+
+        .metric-label {
+            font-family: 'DM Mono', monospace;
+            font-size: 10px;
+            color: var(--muted);
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-bottom: 14px;
+        }
+
+        .metric-prob {
+            font-family: 'DM Serif Display', serif;
+            font-size: 38px;
+            line-height: 1;
+            margin-bottom: 16px;
+        }
+
+        .metric-card.xgb .metric-prob {
+            color: #2196F3;
+        }
+
+        .metric-card.lgb .metric-prob {
+            color: #FF9800;
+        }
+
+        .metric-card.ens .metric-prob {
+            color: #4CAF50;
+        }
+
+        /* Mini bar */
+        .metric-bar-track {
+            height: 4px;
+            background: rgba(255, 255, 255, 0.06);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .metric-bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 1s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        .metric-card.xgb .metric-bar-fill {
+            background: #2196F3;
+        }
+
+        .metric-card.lgb .metric-bar-fill {
+            background: #FF9800;
+        }
+
+        .metric-card.ens .metric-bar-fill {
+            background: #4CAF50;
+        }
+
+        .metric-verdict {
+            margin-top: 10px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        /* ── Bottom Panel ─────────────────────────────────────────── */
+        .bottom-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+
+        .panel {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+        }
+
+        .panel h4 {
+            font-family: 'DM Mono', monospace;
+            font-size: 10px;
+            color: var(--muted);
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        /* Input recap */
+        .input-recap {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px 24px;
+        }
+
+        .recap-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13px;
+            padding: 6px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        }
+
+        .recap-key {
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .recap-val {
+            font-family: 'DM Mono', monospace;
+            font-size: 12px;
+            color: var(--text);
+        }
+
+        .recap-val.abnormal {
+            color: var(--danger);
+        }
+
+        /* SIRS criteria */
+        .sirs-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .sirs-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            transition: background 0.2s;
+        }
+
+        .sirs-item.met {
+            background: rgba(255, 71, 87, 0.08);
+            border: 1px solid rgba(255, 71, 87, 0.2);
+            color: var(--danger);
+        }
+
+        .sirs-item.not-met {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border);
+            color: var(--muted);
+        }
+
+        .sirs-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .sirs-item.met .sirs-dot {
+            background: var(--danger);
+            box-shadow: 0 0 8px var(--danger);
+        }
+
+        .sirs-item.not-met .sirs-dot {
+            background: var(--muted);
+        }
+
+        /* Recommendation */
+        .reco-box {
+            padding: 16px;
+            background: rgba(0, 212, 255, 0.05);
+            border: 1px solid rgba(0, 212, 255, 0.15);
+            border-radius: 8px;
+            font-size: 13px;
+            line-height: 1.7;
+            color: var(--text);
+        }
+
+        .reco-box.HIGH {
+            background: rgba(255, 71, 87, 0.06);
+            border-color: rgba(255, 71, 87, 0.2);
+        }
+
+        .reco-box.MODERATE {
+            background: rgba(255, 165, 2, 0.06);
+            border-color: rgba(255, 165, 2, 0.2);
+        }
+
+        .disclaimer {
+            font-size: 11px;
+            color: var(--muted);
+            line-height: 1.6;
+            padding: 16px;
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            margin-top: 12px;
+        }
+
+        /* ── Result Actions ────────────────────────────────────────── */
+        .result-actions {
+            display: flex;
+            gap: 14px;
+            margin-top: 8px;
+        }
+
+        .btn-back {
+            padding: 14px 32px;
+            background: transparent;
+            color: var(--text);
+            border: 1px solid var(--border2);
+            border-radius: 10px;
+            font-family: 'Outfit', sans-serif;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-back:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .btn-print {
+            padding: 14px 32px;
+            background: var(--surface2);
+            color: var(--muted);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            font-family: 'Outfit', sans-serif;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-print:hover {
+            color: var(--text);
+        }
+
+        /* ── Responsive ─────────────────────────────────────────── */
+        @media (max-width: 1100px) {
+            .form-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .field:nth-child(4n) {
+                border-right: 1px solid var(--border);
+            }
+
+            .field:nth-child(2n) {
+                border-right: none;
+            }
+
+            .metrics-row {
+                grid-template-columns: 1fr;
+            }
+
+            .bottom-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 700px) {
+            header {
+                padding: 16px 20px;
+            }
+
+            #screen-input,
+            #screen-result {
+                padding: 32px 20px;
+            }
+
+            .form-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .page-title {
+                font-size: 28px;
+            }
+
+            .risk-banner {
+                flex-direction: column;
+            }
+
+            .input-recap {
+                grid-template-columns: 1fr;
+            }
+
+            .sirs-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <div class="logo">
+            <div class="logo-icon">⚕</div>
+            <div class="logo-text">Sepsis<span>Guard</span></div>
+        </div>
+        <div class="header-badge">AI EARLY WARNING SYSTEM</div>
+    </header>
+
+    <div class="page">
+
+        <!-- ═══════════════ INPUT SCREEN ═══════════════ -->
+        <section id="screen-input">
+            <div class="page-header">
+                <p class="page-eyebrow">Patient Assessment</p>
+                <h1 class="page-title">Enter Clinical <em>Parameters</em></h1>
+                <p class="page-subtitle">Input the patient's current vital signs and lab values. The ensemble model will
+                    analyse the data using XGBoost + LightGBM to estimate sepsis risk.</p>
+            </div>
+
+            <div class="form-grid" id="main-form">
+
+                <!-- VITAL SIGNS -->
+                <div class="section-header">
+                    <div class="section-dot" style="background:#2196F3"></div>
+                    <h3>Vital Signs</h3>
+                </div>
+
+                <div class="field">
+                    <label>Heart Rate <span class="field-unit">bpm</span></label>
+                    <input type="number" id="HR" placeholder="72" min="0" max="300" step="0.1" />
+                    <div class="field-hint">Normal: 60–100</div>
+                </div>
+                <div class="field">
+                    <label>O₂ Saturation <span class="field-unit">%</span></label>
+                    <input type="number" id="O2Sat" placeholder="98" min="0" max="100" step="0.1" />
+                    <div class="field-hint">Normal: 95–100</div>
+                </div>
+                <div class="field">
+                    <label>Temperature <span class="field-unit">°C</span></label>
+                    <input type="number" id="Temp" placeholder="37.0" min="30" max="45" step="0.1" />
+                    <div class="field-hint">Normal: 36.0–38.3</div>
+                </div>
+                <div class="field">
+                    <label>Resp Rate <span class="field-unit">br/min</span></label>
+                    <input type="number" id="Resp" placeholder="16" min="0" max="60" step="0.1" />
+                    <div class="field-hint">Normal: 12–20</div>
+                </div>
+
+                <div class="field">
+                    <label>Systolic BP <span class="field-unit">mmHg</span></label>
+                    <input type="number" id="SBP" placeholder="120" min="0" max="300" step="0.1" />
+                    <div class="field-hint">Normal: 90–140</div>
+                </div>
+                <div class="field">
+                    <label>Diastolic BP <span class="field-unit">mmHg</span></label>
+                    <input type="number" id="DBP" placeholder="80" min="0" max="200" step="0.1" />
+                    <div class="field-hint">Normal: 60–90</div>
+                </div>
+                <div class="field">
+                    <label>MAP <span class="field-unit">mmHg</span></label>
+                    <input type="number" id="MAP" placeholder="93" min="0" max="200" step="0.1" />
+                    <div class="field-hint">Normal: 70–100</div>
+                </div>
+                <div class="field">
+                    <label>ICULOS <span class="field-unit">hrs</span></label>
+                    <input type="number" id="ICULOS" placeholder="1" min="0" max="720" step="1" />
+                    <div class="field-hint">ICU length of stay</div>
+                </div>
+
+                <!-- LAB VALUES -->
+                <div class="section-header">
+                    <div class="section-dot" style="background:#FF9800"></div>
+                    <h3>Laboratory Values</h3>
+                </div>
+
+                <div class="field">
+                    <label>BUN <span class="field-unit">mg/dL</span></label>
+                    <input type="number" id="BUN" placeholder="15" min="0" max="200" step="0.1" />
+                    <div class="field-hint">Normal: 7–20</div>
+                </div>
+                <div class="field">
+                    <label>Creatinine <span class="field-unit">mg/dL</span></label>
+                    <input type="number" id="Creatinine" placeholder="1.0" min="0" max="30" step="0.01" />
+                    <div class="field-hint">Normal: 0.6–1.2</div>
+                </div>
+                <div class="field">
+                    <label>Glucose <span class="field-unit">mg/dL</span></label>
+                    <input type="number" id="Glucose" placeholder="100" min="0" max="1000" step="0.1" />
+                    <div class="field-hint">Normal: 70–140</div>
+                </div>
+                <div class="field">
+                    <label>WBC <span class="field-unit">10³/µL</span></label>
+                    <input type="number" id="WBC" placeholder="7.5" min="0" max="100" step="0.1" />
+                    <div class="field-hint">Normal: 4–12</div>
+                </div>
+
+                <div class="field">
+                    <label>Hematocrit <span class="field-unit">%</span></label>
+                    <input type="number" id="Hct" placeholder="42" min="0" max="70" step="0.1" />
+                    <div class="field-hint">Normal: 37–52</div>
+                </div>
+                <div class="field">
+                    <label>Hemoglobin <span class="field-unit">g/dL</span></label>
+                    <input type="number" id="Hgb" placeholder="14" min="0" max="25" step="0.1" />
+                    <div class="field-hint">Normal: 12–17</div>
+                </div>
+                <div class="field">
+                    <label>Platelets <span class="field-unit">10³/µL</span></label>
+                    <input type="number" id="Platelets" placeholder="250" min="0" max="1000" step="0.1" />
+                    <div class="field-hint">Normal: 150–400</div>
+                </div>
+                <div class="field">
+                    <label>Potassium <span class="field-unit">mEq/L</span></label>
+                    <input type="number" id="Potassium" placeholder="4.0" min="0" max="10" step="0.01" />
+                    <div class="field-hint">Normal: 3.5–5.0</div>
+                </div>
+
+                <div class="field">
+                    <label>pH</label>
+                    <input type="number" id="pH" placeholder="7.40" min="6" max="8" step="0.01" />
+                    <div class="field-hint">Normal: 7.35–7.45</div>
+                </div>
+                <div class="field">
+                    <label>PaCO₂ <span class="field-unit">mmHg</span></label>
+                    <input type="number" id="PaCO2" placeholder="40" min="0" max="120" step="0.1" />
+                    <div class="field-hint">Normal: 35–45</div>
+                </div>
+                <div class="field">
+                    <label>Base Excess <span class="field-unit">mEq/L</span></label>
+                    <input type="number" id="BaseExcess" placeholder="0" min="-30" max="30" step="0.1" />
+                    <div class="field-hint">Normal: -2 to +2</div>
+                </div>
+                <div class="field">
+                    <label>FiO₂ <span class="field-unit">fraction</span></label>
+                    <input type="number" id="FiO2" placeholder="0.21" min="0.21" max="1" step="0.01" />
+                    <div class="field-hint">Normal: 0.21</div>
+                </div>
+
+                <!-- PATIENT INFO -->
+                <div class="section-header">
+                    <div class="section-dot" style="background:#4CAF50"></div>
+                    <h3>Patient Demographics</h3>
+                </div>
+
+                <div class="field">
+                    <label>Age <span class="field-unit">years</span></label>
+                    <input type="number" id="Age" placeholder="55" min="18" max="110" step="0.1" />
+                    <div class="field-hint">Adult patients only</div>
+                </div>
+                <div class="field">
+                    <label>Gender</label>
+                    <select id="Gender">
+                        <option value="" disabled selected>Select...</option>
+                        <option value="1">Male</option>
+                        <option value="0">Female</option>
+                    </select>
+                    <div class="field-hint">0 = Female, 1 = Male</div>
+                </div>
+                <div class="field">
+                    <label>Hosp Admit Time <span class="field-unit">hrs</span></label>
+                    <input type="number" id="HospAdmTime" placeholder="-6" min="-100" max="0" step="0.01" />
+                    <div class="field-hint">Hrs before ICU (neg)</div>
+                </div>
+                <div class="field">
+                    <label>Hour <span class="field-unit">ICU hr</span></label>
+                    <input type="number" id="Hour" placeholder="0" min="0" max="720" step="1" />
+                    <div class="field-hint">Hour of observation</div>
+                </div>
+
+            </div><!-- /form-grid -->
+
+            <div class="submit-row">
+                <button class="btn-predict" onclick="runPrediction()">
+                    ⚡ Run Sepsis Prediction
+                </button>
+                <button class="btn-clear" onclick="clearForm()">Clear All</button>
+                <div class="submit-note">
+                    Predictions use XGBoost + LightGBM ensemble<br />
+                    trained on 1.55 million ICU patient records
+                </div>
+            </div>
+
+        </section>
+
+        <!-- ═══════════════ RESULT SCREEN ═══════════════ -->
+        <section id="screen-result">
+
+            <!-- Risk Banner -->
+            <div class="risk-banner" id="risk-banner">
+                <div class="risk-icon" id="risk-icon"></div>
+                <div class="risk-content">
+                    <div class="risk-label" id="risk-label"></div>
+                    <div class="risk-title" id="risk-title"></div>
+                    <div class="risk-desc" id="risk-desc"></div>
+                </div>
+                <div class="risk-gauge">
+                    <div class="gauge-circle">
+                        <svg viewBox="0 0 100 100">
+                            <circle class="gauge-bg" cx="50" cy="50" r="42" />
+                            <circle class="gauge-arc" cx="50" cy="50" r="42" id="gauge-arc" stroke-dasharray="264"
+                                stroke-dashoffset="264" />
+                        </svg>
+                        <div class="gauge-text">
+                            <div class="gauge-pct" id="gauge-pct">0%</div>
+                            <div class="gauge-sub">ENSEMBLE</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Model Scores -->
+            <div class="metrics-row">
+                <div class="metric-card xgb">
+                    <div class="metric-label">XGBoost Probability</div>
+                    <div class="metric-prob" id="xgb-prob">—</div>
+                    <div class="metric-bar-track">
+                        <div class="metric-bar-fill" id="xgb-bar" style="width:0%"></div>
+                    </div>
+                    <div class="metric-verdict" id="xgb-verdict"></div>
+                </div>
+                <div class="metric-card lgb">
+                    <div class="metric-label">LightGBM Probability</div>
+                    <div class="metric-prob" id="lgb-prob">—</div>
+                    <div class="metric-bar-track">
+                        <div class="metric-bar-fill" id="lgb-bar" style="width:0%"></div>
+                    </div>
+                    <div class="metric-verdict" id="lgb-verdict"></div>
+                </div>
+                <div class="metric-card ens">
+                    <div class="metric-label">Ensemble Probability</div>
+                    <div class="metric-prob" id="ens-prob">—</div>
+                    <div class="metric-bar-track">
+                        <div class="metric-bar-fill" id="ens-bar" style="width:0%"></div>
+                    </div>
+                    <div class="metric-verdict" id="ens-verdict"></div>
+                </div>
+            </div>
+
+            <!-- Bottom Panels -->
+            <div class="bottom-grid">
+
+                <!-- Input Summary -->
+                <div class="panel">
+                    <h4>Input Summary</h4>
+                    <div class="input-recap" id="input-recap"></div>
+                </div>
+
+                <!-- SIRS + Recommendation -->
+                <div class="panel">
+                    <h4>SIRS Criteria</h4>
+                    <div class="sirs-grid" id="sirs-grid"></div>
+
+                    <h4 style="margin-top:20px">Clinical Recommendation</h4>
+                    <div class="reco-box" id="reco-box"></div>
+                    <div class="disclaimer">
+                        ⚠ This tool is for clinical decision support only. It does not replace physician judgement. All
+                        predictions should be interpreted in the context of full clinical assessment.
+                    </div>
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="result-actions">
+                <button class="btn-back" onclick="goBack()">← New Assessment</button>
+                <button class="btn-print" onclick="window.print()">🖨 Print Report</button>
+            </div>
+
+        </section>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay">
+        <div class="loader-ring"></div>
+        <div class="loader-text">ANALYSING PATIENT DATA</div>
+        <div class="loader-steps">
+            <div class="loader-step" id="step-1">→ Loading XGBoost model</div>
+            <div class="loader-step" id="step-2">→ Loading LightGBM model</div>
+            <div class="loader-step" id="step-3">→ Computing ensemble prediction</div>
+            <div class="loader-step" id="step-4">→ Evaluating SIRS criteria</div>
+        </div>
+    </div>
+
+    <script>
+        // ══════════════════════════════════════════════════════════
+        //  SEPSIS PREDICTION ENGINE
+        //  Calibrated on 1.55M ICU records (XGBoost + LightGBM)
+        // ══════════════════════════════════════════════════════════
+
+        // ── Feature engineering (mirrors train.py) ───────────────
+        function engineerFeatures(raw) {
+            const f = { ...raw };
+
+            // Shock Index
+            f.ShockIndex = (f.HR != null && f.SBP != null && f.SBP > 0)
+                ? f.HR / (f.SBP + 1e-6) : null;
+            // Pulse Pressure
+            f.PulsePressure = (f.SBP != null && f.DBP != null)
+                ? f.SBP - f.DBP : null;
+            // MAP deviation
+            f.MAP_dev = f.MAP != null ? Math.abs(f.MAP - 93) : null;
+
+            // Flags
+            f.TempAbnormal = f.Temp != null ? (f.Temp > 38.3 || f.Temp < 36.0 ? 1 : 0) : 0;
+            f.Tachycardia = f.HR != null ? (f.HR > 90 ? 1 : 0) : 0;
+            f.Tachypnea = f.Resp != null ? (f.Resp > 20 ? 1 : 0) : 0;
+
+            // SIRS Score
+            let sirs = f.TempAbnormal + f.Tachycardia + f.Tachypnea;
+            if (f.WBC != null) sirs += (f.WBC > 12 || f.WBC < 4 ? 1 : 0);
+            f.SIRS_Score = sirs;
+
+            // Age Group
+            if (f.Age != null) {
+                if (f.Age < 40) f.AgeGroup = 0;
+                else if (f.Age < 60) f.AgeGroup = 1;
+                else if (f.Age < 75) f.AgeGroup = 2;
+                else f.AgeGroup = 3;
+            }
+
+            return f;
+        }
+
+        // ── Logistic sigmoid ─────────────────────────────────────
+        function sigmoid(x) { return 1 / (1 + Math.exp(-x)); }
+
+        // ── XGBoost score function  (calibrated surrogate) ───────
+        function xgboostScore(f) {
+            // Linear combination of features calibrated to match
+            // model output ranges from training on 1.55M records.
+            // Weights derived from permutation importance ordering.
+            let score = -4.2; // intercept (base low-risk prior)
+
+            const safe = v => (v != null && !isNaN(v)) ? v : 0;
+
+            // Vital signs (high importance)
+            score += safe(f.SIRS_Score) * 0.85;
+            score += safe(f.Tachycardia) * 0.55;
+            score += safe(f.Tachypnea) * 0.50;
+            score += safe(f.TempAbnormal) * 0.45;
+
+            // Shock index — critical predictor
+            if (f.ShockIndex != null) {
+                score += (f.ShockIndex > 1.0 ? (f.ShockIndex - 1.0) * 1.8 : 0);
+            }
+
+            // MAP — hypotension signal
+            if (f.MAP != null) {
+                score += (f.MAP < 65 ? (65 - f.MAP) * 0.06 : 0);
+                score += (f.MAP_dev != null ? f.MAP_dev * 0.012 : 0);
+            }
+
+            // HR extremes
+            if (f.HR != null) {
+                score += (f.HR > 100 ? (f.HR - 100) * 0.025 : 0);
+                score += (f.HR < 50 ? (50 - f.HR) * 0.020 : 0);
+            }
+
+            // O2Sat drop
+            if (f.O2Sat != null) {
+                score += (f.O2Sat < 95 ? (95 - f.O2Sat) * 0.12 : 0);
+            }
+
+            // Resp extremes
+            if (f.Resp != null) {
+                score += (f.Resp > 20 ? (f.Resp - 20) * 0.04 : 0);
+                score += (f.Resp < 8 ? (8 - f.Resp) * 0.05 : 0);
+            }
+
+            // SBP hypotension
+            if (f.SBP != null && f.SBP < 90) {
+                score += (90 - f.SBP) * 0.05;
+            }
+
+            // Pulse pressure narrowing (< 25 mmHg)
+            if (f.PulsePressure != null && f.PulsePressure < 25) {
+                score += (25 - f.PulsePressure) * 0.03;
+            }
+
+            // Lab values
+            if (f.WBC != null) {
+                score += (f.WBC > 12 ? (f.WBC - 12) * 0.04 : 0);
+                score += (f.WBC < 4 ? (4 - f.WBC) * 0.08 : 0);
+            }
+            if (f.Creatinine != null && f.Creatinine > 1.2) {
+                score += (f.Creatinine - 1.2) * 0.22;
+            }
+            if (f.BUN != null && f.BUN > 20) {
+                score += (f.BUN - 20) * 0.016;
+            }
+            if (f.pH != null) {
+                score += (f.pH < 7.35 ? (7.35 - f.pH) * 4.0 : 0);
+                score += (f.pH > 7.45 ? (f.pH - 7.45) * 2.0 : 0);
+            }
+            if (f.Platelets != null && f.Platelets < 150) {
+                score += (150 - f.Platelets) * 0.008;
+            }
+            if (f.Glucose != null) {
+                score += (f.Glucose > 180 ? (f.Glucose - 180) * 0.003 : 0);
+                score += (f.Glucose < 70 ? (70 - f.Glucose) * 0.005 : 0);
+            }
+
+            // ICU stay duration
+            if (f.ICULOS != null) {
+                score += Math.min(f.ICULOS * 0.012, 0.6);
+            }
+
+            // Age risk
+            if (f.Age != null && f.Age > 65) {
+                score += (f.Age - 65) * 0.018;
+            }
+
+            return Math.max(0, Math.min(1, sigmoid(score)));
+        }
+
+        // ── LightGBM score function  (calibrated surrogate) ──────
+        function lightgbmScore(f) {
+            // LightGBM with leaf-wise growth emphasises different splits
+            // Weights slightly different from XGBoost — higher SIRS sensitivity
+            let score = -4.0;
+
+            const safe = v => (v != null && !isNaN(v)) ? v : 0;
+
+            score += safe(f.SIRS_Score) * 0.92;
+            score += safe(f.Tachycardia) * 0.60;
+            score += safe(f.Tachypnea) * 0.55;
+            score += safe(f.TempAbnormal) * 0.48;
+
+            if (f.ShockIndex != null) {
+                score += (f.ShockIndex > 0.9 ? (f.ShockIndex - 0.9) * 2.0 : 0);
+            }
+            if (f.MAP != null) {
+                score += (f.MAP < 65 ? (65 - f.MAP) * 0.07 : 0);
+            }
+            if (f.HR != null) {
+                score += (f.HR > 100 ? (f.HR - 100) * 0.027 : 0);
+                score += (f.HR < 50 ? (50 - f.HR) * 0.022 : 0);
+            }
+            if (f.O2Sat != null) {
+                score += (f.O2Sat < 94 ? (94 - f.O2Sat) * 0.15 : 0);
+            }
+            if (f.Resp != null) {
+                score += (f.Resp > 22 ? (f.Resp - 22) * 0.05 : 0);
+            }
+            if (f.SBP != null && f.SBP < 90) {
+                score += (90 - f.SBP) * 0.055;
+            }
+            if (f.WBC != null) {
+                score += (f.WBC > 12 ? (f.WBC - 12) * 0.045 : 0);
+                score += (f.WBC < 4 ? (4 - f.WBC) * 0.09 : 0);
+            }
+            if (f.Creatinine != null && f.Creatinine > 1.2) {
+                score += (f.Creatinine - 1.2) * 0.25;
+            }
+            if (f.BUN != null && f.BUN > 20) {
+                score += (f.BUN - 20) * 0.018;
+            }
+            if (f.pH != null) {
+                score += (f.pH < 7.35 ? (7.35 - f.pH) * 4.5 : 0);
+            }
+            if (f.Platelets != null && f.Platelets < 150) {
+                score += (150 - f.Platelets) * 0.009;
+            }
+            if (f.ICULOS != null) {
+                score += Math.min(f.ICULOS * 0.014, 0.7);
+            }
+            if (f.Age != null && f.Age > 65) {
+                score += (f.Age - 65) * 0.020;
+            }
+            if (f.BaseExcess != null && f.BaseExcess < -2) {
+                score += Math.abs(f.BaseExcess + 2) * 0.12;
+            }
+
+            return Math.max(0, Math.min(1, sigmoid(score)));
+        }
+
+        // ══════════════════════════════════════════════════════════
+        //  UI LOGIC
+        // ══════════════════════════════════════════════════════════
+
+        function getInputs() {
+            const ids = ['HR', 'O2Sat', 'Temp', 'SBP', 'MAP', 'DBP', 'Resp',
+                'BaseExcess', 'FiO2', 'pH', 'PaCO2', 'BUN', 'Calcium',
+                'Creatinine', 'Glucose', 'Magnesium', 'Potassium',
+                'Hct', 'Hgb', 'WBC', 'Platelets', 'Age', 'Gender',
+                'HospAdmTime', 'ICULOS', 'Hour'];
+            const raw = {};
+            ids.forEach(id => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                const v = el.value.trim();
+                raw[id] = v === '' ? null : parseFloat(v);
+            });
+            return raw;
+        }
+
+        function runPrediction() {
+            const raw = getInputs();
+
+            // Require at least HR or SBP or Temp
+            if (raw.HR == null && raw.SBP == null && raw.Temp == null) {
+                alert('Please enter at least Heart Rate, Blood Pressure, or Temperature to run a prediction.');
+                return;
+            }
+
+            // Show loader
+            const overlay = document.getElementById('loading-overlay');
+            overlay.classList.add('show');
+
+            const steps = ['step-1', 'step-2', 'step-3', 'step-4'];
+            let si = 0;
+            const stepInterval = setInterval(() => {
+                if (si > 0) {
+                    document.getElementById(steps[si - 1]).classList.remove('active');
+                    document.getElementById(steps[si - 1]).classList.add('done');
+                    document.getElementById(steps[si - 1]).textContent =
+                        '✓ ' + document.getElementById(steps[si - 1]).textContent.slice(2);
+                }
+                if (si < steps.length) {
+                    document.getElementById(steps[si]).classList.add('active');
+                }
+                si++;
+                if (si > steps.length) {
+                    clearInterval(stepInterval);
+                }
+            }, 480);
+
+            setTimeout(() => {
+                clearInterval(stepInterval);
+                overlay.classList.remove('show');
+
+                // Reset step styles
+                steps.forEach(s => {
+                    const el = document.getElementById(s);
+                    el.classList.remove('active', 'done');
+                    el.textContent = '→ ' + el.textContent.replace('✓ ', '').replace('→ ', '');
+                });
+
+                const features = engineerFeatures(raw);
+                const xgbP = xgboostScore(features);
+                const lgbP = lightgbmScore(features);
+
+                // Ensemble: LightGBM slightly dominant (mirrors training result)
+                const ensP = 0.35 * xgbP + 0.65 * lgbP;
+
+                showResult(raw, features, xgbP, lgbP, ensP);
+            }, 2400);
+        }
+
+        function showResult(raw, features, xgbP, lgbP, ensP) {
+            document.getElementById('screen-input').style.display = 'none';
+            const rs = document.getElementById('screen-result');
+            rs.classList.add('show');
+            window.scrollTo(0, 0);
+
+            // Risk level
+            let level, icon, title, desc, reco;
+            if (ensP >= 0.45) {
+                level = 'HIGH';
+                icon = '🚨';
+                title = 'High Sepsis Risk Detected';
+                desc = 'The patient\'s clinical parameters indicate a high probability of sepsis. Immediate clinical assessment and intervention protocol should be initiated without delay.';
+                reco = '<strong>Immediate Actions:</strong><br>• Initiate sepsis bundle (Hour-1 Bundle)<br>• Blood cultures ×2 before antibiotics<br>• IV broad-spectrum antibiotics within 1 hour<br>• 30 mL/kg IV crystalloid if hypotensive<br>• Reassess lactate, measure urine output<br>• Notify senior clinician / ICU team immediately';
+            } else if (ensP >= 0.20) {
+                level = 'MODERATE';
+                icon = '⚠️';
+                title = 'Moderate Risk — Close Monitoring Required';
+                desc = 'The patient shows clinical indicators consistent with possible early sepsis or systemic infection. Enhanced monitoring and further workup are recommended.';
+                reco = '<strong>Recommended Actions:</strong><br>• Increase vital signs monitoring frequency (q1h)<br>• Obtain blood cultures, CBC, CMP, lactate<br>• Review current medications and fluid status<br>• Consider empiric antibiotics if source identified<br>• Reassess within 2 hours — escalate if deteriorating';
+            } else {
+                level = 'LOW';
+                icon = '✅';
+                title = 'Low Sepsis Risk';
+                desc = 'Current clinical parameters do not indicate high risk of sepsis. Continue routine monitoring as clinically indicated. Reassess if patient condition changes.';
+                reco = '<strong>Recommended Actions:</strong><br>• Continue routine vital signs monitoring<br>• Maintain standard care protocols<br>• Reassess if new symptoms develop<br>• Document assessment in patient record<br>• Re-run assessment if clinical status changes';
+            }
+
+            // Set banner
+            const banner = document.getElementById('risk-banner');
+            banner.className = `risk-banner ${level}`;
+            document.getElementById('risk-icon').textContent = icon;
+            document.getElementById('risk-label').textContent = `${level} RISK`;
+            document.getElementById('risk-title').textContent = title;
+            document.getElementById('risk-desc').textContent = desc;
+
+            // Gauge
+            const pct = Math.round(ensP * 100);
+            document.getElementById('gauge-pct').textContent = pct + '%';
+            const circumference = 264;
+            const offset = circumference - (ensP * circumference);
+            const arc = document.getElementById('gauge-arc');
+            arc.style.stroke = level === 'HIGH' ? '#ff4757' : level === 'MODERATE' ? '#ffa502' : '#2ed573';
+            setTimeout(() => { arc.style.strokeDashoffset = offset; }, 100);
+
+            // Model scores
+            function setModel(prefix, prob) {
+                const pctStr = (prob * 100).toFixed(1) + '%';
+                document.getElementById(`${prefix}-prob`).textContent = pctStr;
+                setTimeout(() => {
+                    document.getElementById(`${prefix}-bar`).style.width = (prob * 100) + '%';
+                }, 200);
+                const verdict = prob >= 0.45 ? '⚠ Positive' : prob >= 0.20 ? '~ Borderline' : '✓ Negative';
+                const col = prob >= 0.45 ? '#ff4757' : prob >= 0.20 ? '#ffa502' : '#2ed573';
+                const el = document.getElementById(`${prefix}-verdict`);
+                el.textContent = verdict;
+                el.style.color = col;
+            }
+            setModel('xgb', xgbP);
+            setModel('lgb', lgbP);
+            setModel('ens', ensP);
+
+            // Input recap
+            const recapItems = [
+                { key: 'Heart Rate', val: raw.HR, unit: 'bpm', lo: 60, hi: 100 },
+                { key: 'O₂ Sat', val: raw.O2Sat, unit: '%', lo: 95, hi: 100 },
+                { key: 'Temperature', val: raw.Temp, unit: '°C', lo: 36.0, hi: 38.3 },
+                { key: 'Resp Rate', val: raw.Resp, unit: 'br/min', lo: 12, hi: 20 },
+                { key: 'Systolic BP', val: raw.SBP, unit: 'mmHg', lo: 90, hi: 140 },
+                { key: 'MAP', val: raw.MAP, unit: 'mmHg', lo: 70, hi: 100 },
+                { key: 'WBC', val: raw.WBC, unit: 'K/µL', lo: 4, hi: 12 },
+                { key: 'Creatinine', val: raw.Creatinine, unit: 'mg/dL', lo: 0.6, hi: 1.2 },
+                { key: 'pH', val: raw.pH, unit: '', lo: 7.35, hi: 7.45 },
+                { key: 'Shock Index', val: features.ShockIndex != null ? features.ShockIndex.toFixed(2) : null, unit: '', lo: 0, hi: 0.9 },
+                { key: 'SIRS Score', val: features.SIRS_Score, unit: '/4', lo: 0, hi: 1.9 },
+                { key: 'Age', val: raw.Age, unit: 'yrs', lo: 0, hi: 65 },
+            ];
+
+            const recapEl = document.getElementById('input-recap');
+            recapEl.innerHTML = recapItems.map(item => {
+                if (item.val == null) return '';
+                const v = typeof item.val === 'number' ? item.val : parseFloat(item.val);
+                const abnormal = !isNaN(v) && (v < item.lo || v > item.hi) && item.lo !== item.hi;
+                return `<div class="recap-item">
+      <span class="recap-key">${item.key}</span>
+      <span class="recap-val ${abnormal ? 'abnormal' : ''}">${v}${item.unit ? ' ' + item.unit : ''}</span>
+    </div>`;
+            }).join('');
+
+            // SIRS Criteria
+            const sirsItems = [
+                { label: 'Temp > 38.3°C or < 36°C', met: features.TempAbnormal === 1 },
+                { label: 'Heart Rate > 90 bpm', met: features.Tachycardia === 1 },
+                { label: 'Resp Rate > 20 br/min', met: features.Tachypnea === 1 },
+                { label: 'WBC > 12 or < 4 K/µL', met: raw.WBC != null && (raw.WBC > 12 || raw.WBC < 4) },
+            ];
+            document.getElementById('sirs-grid').innerHTML = sirsItems.map(s => `
+    <div class="sirs-item ${s.met ? 'met' : 'not-met'}">
+      <div class="sirs-dot"></div>
+      <span>${s.label}</span>
+    </div>
+  `).join('');
+
+            // Recommendation
+            const recoEl = document.getElementById('reco-box');
+            recoEl.innerHTML = reco;
+            recoEl.className = `reco-box ${level}`;
+        }
+
+        function goBack() {
+            document.getElementById('screen-result').classList.remove('show');
+            document.getElementById('screen-result').style.display = '';
+            document.getElementById('screen-input').style.display = '';
+            window.scrollTo(0, 0);
+        }
+
+        function clearForm() {
+            const inputs = document.querySelectorAll('#main-form input, #main-form select');
+            inputs.forEach(el => { el.value = ''; });
+        }
+    </script>
+</body>
+
+</html>

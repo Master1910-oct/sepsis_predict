@@ -1,0 +1,21 @@
+# Virtual environment
+venv/
+
+# Dataset
+Dataset.csv
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Model artifacts
+models/
+*.pkl
+*.npy
+
+# Output folders
+sepsis_test_outputs/
+sepsis_train_outputs/
+
+# Logs
+*.log
