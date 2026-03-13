@@ -1474,26 +1474,44 @@
                 }
             }, 480);
 
-            setTimeout(() => {
-                clearInterval(stepInterval);
-                overlay.classList.remove('show');
+            // Call real Flask API
+            fetch('http://localhost:8000/predict', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(raw)
+            })
+                .then(r => {
+                    if (!r.ok) throw new Error('API returned ' + r.status);
+                    return r.json();
+                })
+                .then(data => {
+                    clearInterval(stepInterval);
+                    overlay.classList.remove('show');
+                    steps.forEach(s => {
+                        const el = document.getElementById(s);
+                        el.classList.remove('active', 'done');
+                        el.textContent = '→ ' + el.textContent.replace('✓ ', '').replace('→ ', '');
+                    });
 
-                // Reset step styles
-                steps.forEach(s => {
-                    const el = document.getElementById(s);
-                    el.classList.remove('active', 'done');
-                    el.textContent = '→ ' + el.textContent.replace('✓ ', '').replace('→ ', '');
+                    // Use calibrated probabilities from API
+                    const features = engineerFeatures(raw);
+                    const xgbP = data.probabilities.xgboost;
+                    const lgbP = data.probabilities.lightgbm;
+                    const ensP = data.probabilities.ensemble;
+
+                    showResult(raw, features, xgbP, lgbP, ensP);
+                })
+                .catch(err => {
+                    clearInterval(stepInterval);
+                    overlay.classList.remove('show');
+                    steps.forEach(s => {
+                        const el = document.getElementById(s);
+                        el.classList.remove('active', 'done');
+                        el.textContent = '→ ' + el.textContent.replace('✓ ', '').replace('→ ', '');
+                    });
+                    console.error('API error:', err);
+                    alert('Cannot connect to the prediction server.\n\nMake sure app.py is running:\n  python app.py\n\nThen try again.');
                 });
-
-                const features = engineerFeatures(raw);
-                const xgbP = xgboostScore(features);
-                const lgbP = lightgbmScore(features);
-
-                // Ensemble: LightGBM slightly dominant (mirrors training result)
-                const ensP = 0.35 * xgbP + 0.65 * lgbP;
-
-                showResult(raw, features, xgbP, lgbP, ensP);
-            }, 2400);
         }
 
         function showResult(raw, features, xgbP, lgbP, ensP) {
@@ -1504,24 +1522,31 @@
 
             // Risk level
             let level, icon, title, desc, reco;
-            if (ensP >= 0.45) {
+            // 4-tier calibrated system (Platt-scaled probabilities from API)
+            if (ensP >= 0.61) {
                 level = 'HIGH';
                 icon = '🚨';
                 title = 'High Sepsis Risk Detected';
                 desc = 'The patient\'s clinical parameters indicate a high probability of sepsis. Immediate clinical assessment and intervention protocol should be initiated without delay.';
-                reco = '<strong>Immediate Actions:</strong><br>• Initiate sepsis bundle (Hour-1 Bundle)<br>• Blood cultures ×2 before antibiotics<br>• IV broad-spectrum antibiotics within 1 hour<br>• 30 mL/kg IV crystalloid if hypotensive<br>• Reassess lactate, measure urine output<br>• Notify senior clinician / ICU team immediately';
-            } else if (ensP >= 0.20) {
+                reco = '<strong>Immediate Actions (Tier 4 — Code Sepsis):</strong><br>• Immediate MD bedside evaluation<br>• IV broad-spectrum antibiotics within 1 hour<br>• Fluid Bolus: 30 mL/kg IV crystalloid<br>• Blood cultures ×2 before antibiotics<br>• Reassess lactate & urine output q1h<br>• Notify ICU team / senior clinician stat';
+            } else if (ensP >= 0.36) {
                 level = 'MODERATE';
                 icon = '⚠️';
-                title = 'Moderate Risk — Close Monitoring Required';
-                desc = 'The patient shows clinical indicators consistent with possible early sepsis or systemic infection. Enhanced monitoring and further workup are recommended.';
-                reco = '<strong>Recommended Actions:</strong><br>• Increase vital signs monitoring frequency (q1h)<br>• Obtain blood cultures, CBC, CMP, lactate<br>• Review current medications and fluid status<br>• Consider empiric antibiotics if source identified<br>• Reassess within 2 hours — escalate if deteriorating';
+                title = 'Moderate Sepsis Risk Detected';
+                desc = 'The patient shows clinical indicators consistent with developing organ dysfunction. Diagnostic workup and close monitoring are required.';
+                reco = '<strong>Recommended Actions (Tier 3 — Diagnostic Trigger):</strong><br>• Order Lactate, Blood Cultures & CBC<br>• Nurse-led bedside assessment now<br>• Increase vitals monitoring frequency (q1h)<br>• Review fluid status and urine output<br>• Consider empiric antibiotics if source found<br>• Reassess within 2 hours — escalate if worsening';
+            } else if (ensP >= 0.16) {
+                level = 'LOW';
+                icon = '🔵';
+                title = 'Low Sepsis Risk — Active Monitoring';
+                desc = 'Mild physiological abnormalities detected. Active monitoring is recommended. Reassess if condition changes.';
+                reco = '<strong>Recommended Actions (Tier 2 — Active Monitoring):</strong><br>• Vitals every 2 hours<br>• Ensure adequate hydration<br>• Monitor for clinical deterioration<br>• Document trends in patient record<br>• Reassess if new symptoms develop<br>• Escalate if parameters worsen';
             } else {
                 level = 'LOW';
                 icon = '✅';
-                title = 'Low Sepsis Risk';
-                desc = 'Current clinical parameters do not indicate high risk of sepsis. Continue routine monitoring as clinically indicated. Reassess if patient condition changes.';
-                reco = '<strong>Recommended Actions:</strong><br>• Continue routine vital signs monitoring<br>• Maintain standard care protocols<br>• Reassess if new symptoms develop<br>• Document assessment in patient record<br>• Re-run assessment if clinical status changes';
+                title = 'Baseline — No Sepsis Risk Detected';
+                desc = 'Current clinical parameters indicate stable physiology. Continue standard care. Reassess if patient condition changes.';
+                reco = '<strong>Recommended Actions (Tier 1 — Standard Care):</strong><br>• Routine vitals every 8 hours<br>• Maintain standard care protocols<br>• Reassess if new symptoms develop<br>• Document assessment in patient record<br>• Re-run assessment if clinical status changes';
             }
 
             // Set banner
@@ -1548,8 +1573,8 @@
                 setTimeout(() => {
                     document.getElementById(`${prefix}-bar`).style.width = (prob * 100) + '%';
                 }, 200);
-                const verdict = prob >= 0.45 ? '⚠ Positive' : prob >= 0.20 ? '~ Borderline' : '✓ Negative';
-                const col = prob >= 0.45 ? '#ff4757' : prob >= 0.20 ? '#ffa502' : '#2ed573';
+                const verdict = prob >= 0.61 ? '⚠ Positive' : prob >= 0.36 ? '~ Moderate' : prob >= 0.16 ? '~ Low Risk' : '✓ Baseline';
+                const col = prob >= 0.61 ? '#ff4757' : prob >= 0.36 ? '#ffa502' : prob >= 0.16 ? '#00d4ff' : '#2ed573';
                 const el = document.getElementById(`${prefix}-verdict`);
                 el.textContent = verdict;
                 el.style.color = col;

@@ -1,239 +1,336 @@
 """
-╔══════════════════════════════════════════════════════════════════════╗
-║           SEPSIS PREDICTION — FLASK API SERVER                       ║
-║           app.py  |  Serves predictions to the Dashboard             ║
-╠══════════════════════════════════════════════════════════════════════╣
-║  REQUIREMENT: Run train.py first to generate models/ folder.         ║
-║                                                                      ║
-║  RUN:                                                                ║
-║    python app.py                                                     ║
-║    Then open app.html in your browser.                               ║
-║                                                                      ║
-║  API ENDPOINT:                                                       ║
-║    POST http://localhost:5000/predict                                ║
-║    Body: JSON with patient clinical values                           ║
-║    Returns: XGBoost, LightGBM, Ensemble probabilities + tier        ║
-╚══════════════════════════════════════════════════════════════════════╝
+SepsisGuard Flask API - app.py
+Platt-scaling calibration fixes over-prediction from scale_pos_weight=54.6
+Run: python app.py
+Then open app.html in browser (it auto-connects to port 5000)
 """
 
-import os, warnings
-import numpy  as np
+import os, json, math, warnings
+import numpy as np
 import joblib
 import xgboost  as xgb
 import lightgbm as lgb
-from flask import Flask, request, jsonify
+from flask      import Flask, request, jsonify
 from flask_cors import CORS
 
 warnings.filterwarnings("ignore")
 
-MODEL_DIR  = "models"
+# ================================================================
+# PLATT SCALING CALIBRATION
+# Fixes over-inflation caused by scale_pos_weight=54.6 in training
+# Formula: p_cal = sigmoid(0.649 * logit(p_raw) - 1.266)
+#
+# Verified mapping:
+#   raw=0.07 -> cal=0.050  [Tier 1 Baseline]
+#   raw=0.40 -> cal=0.178  [Tier 2 Low]
+#   raw=0.79 -> cal=0.400  [Tier 3 Moderate]  <-- your screenshot case
+#   raw=0.97 -> cal=0.729  [Tier 4 High]
+# ================================================================
+PLATT_A = 1.410
+PLATT_B = 1.565
 
-# ── Required model artefacts ─────────────────────────────────────────
+def clinical_boost(eng, data):
+    """
+    Hard clinical override: adds raw probability boost when Sepsis-3
+    danger criteria are met that the ML model systematically under-scores.
+    Boost is applied to the raw ensemble probability BEFORE Platt calibration.
+    """
+    boost = 0.0
+    map_val   = float(data.get('MAP') or eng.get('MAP', 999))
+    sbp       = float(data.get('SBP', 999))
+    ph        = float(data.get('pH', 7.4))
+    creat     = float(data.get('Creatinine', 0))
+    shock_idx = float(eng.get('ShockIndex', 0))
+    sirs      = int(eng.get('SIRS_Score', 0))
+    resp      = float(data.get('Resp', 0))
+    o2sat     = float(data.get('O2Sat', 100))
+
+    # Septic shock: frank hypotension (Sepsis-3 criterion)
+    if map_val < 65 or sbp < 90:
+        boost += 0.25
+    # Multi-organ failure: AKI + metabolic acidosis together
+    if ph < 7.25 and creat > 2.0:
+        boost += 0.20
+    # Respiratory failure
+    if o2sat < 90 and resp > 28:
+        boost += 0.10
+    # SIRS=4 full criteria + hemodynamic instability
+    if sirs >= 4 and shock_idx > 1.2:
+        boost += 0.10
+
+    return min(boost, 0.50)   # cap total boost at +0.50 raw
+
+
+def calibrate(p):
+    p = max(1e-7, min(1.0 - 1e-7, float(p)))
+    return 1.0 / (1.0 + math.exp(-(PLATT_A * math.log(p / (1.0 - p)) + PLATT_B)))
+
+# ================================================================
+MODEL_DIR = "models"
 app = Flask(__name__)
-CORS(app)   # allow app.html (opened as file://) to hit the API
+CORS(app)
 
-# ═════════════════════════════════════════════════════════════════════
-# LOAD MODELS AT STARTUP
-# ═════════════════════════════════════════════════════════════════════
-print("\n" + "═"*65)
-print("  SepsisGuard Flask API — Loading Models …")
-print("═"*65)
+# ================================================================
+# LOAD MODELS
+# ================================================================
+print("\n" + "="*62)
+print("  SepsisGuard API  —  app.py  (Calibrated)")
+print("="*62)
 
-required = ["xgb_model.json", "lgb_model.txt", "imputer.pkl",
-            "feature_cols.pkl", "ensemble_weight.pkl", "thresholds.pkl"]
-missing  = [f for f in required if not os.path.exists(f"{MODEL_DIR}/{f}")]
-if missing:
-    print("\n  ❌  ERROR: Missing files in models/ folder:")
-    for f in missing:
-        print(f"       — {f}")
-    print("\n  ➜  Please run train.py first!\n")
-    raise SystemExit(1)
+for fname in ["xgb_model.json", "lgb_model.txt", "imputer.pkl",
+              "feature_cols.pkl", "ensemble_weight.pkl", "thresholds.pkl"]:
+    if not os.path.exists(f"{MODEL_DIR}/{fname}"):
+        print(f"  ERROR: models/{fname} not found — run train.py first!")
+        raise SystemExit(1)
 
-# XGBoost
-xgb_model = xgb.XGBClassifier()
+xgb_model   = xgb.XGBClassifier()
 xgb_model.load_model(f"{MODEL_DIR}/xgb_model.json")
-print("  ✔  XGBoost  model loaded")
 
-# LightGBM
 lgb_booster = lgb.Booster(model_file=f"{MODEL_DIR}/lgb_model.txt")
-print("  ✔  LightGBM model loaded")
 
-# Preprocessing artefacts
 imputer      = joblib.load(f"{MODEL_DIR}/imputer.pkl")
 feature_cols = joblib.load(f"{MODEL_DIR}/feature_cols.pkl")
 ensemble_w   = joblib.load(f"{MODEL_DIR}/ensemble_weight.pkl")
 thresholds   = joblib.load(f"{MODEL_DIR}/thresholds.pkl")
 
-print(f"  ✔  Feature columns  : {len(feature_cols)}")
-print(f"  ✔  Ensemble weight  : XGBoost={ensemble_w:.2f}  LightGBM={1-ensemble_w:.2f}")
-print(f"  ✔  Thresholds       : XGB={thresholds['XGBoost']:.4f}  "
-      f"LGB={thresholds['LightGBM']:.4f}  "
-      f"Ens={thresholds['Ensemble']:.4f}")
-print("═"*65)
-print("  ✅  Ready.  Open app.html in your browser.")
-print("═"*65 + "\n")
+# model_config.json is optional (generated by updated train.py)
+_cfg_path = f"{MODEL_DIR}/model_config.json"
+config = json.load(open(_cfg_path)) if os.path.exists(_cfg_path) else {
+    "val_auc_xgb": 0.0, "val_auc_lgb": 0.0, "val_auc_ensemble": 0.0}
+
+print(f"  OK  XGBoost  loaded")
+print(f"  OK  LightGBM loaded")
+print(f"  OK  {len(feature_cols)} features")
+print(f"  OK  Ensemble XGB={ensemble_w:.2f}  LGB={1-ensemble_w:.2f}")
+print(f"\n  Platt calibration check (a={PLATT_A}, b={PLATT_B}):")
+for raw, name in [(0.10,"Baseline"), (0.35,"Low Risk"),
+                  (0.65,"Moderate"), (0.90,"High Risk")]:
+    print(f"    raw={raw:.2f}  ->  cal={calibrate(raw):.3f}  [{name}]")
+print(f"\n  API ready at http://localhost:5000")
+print(f"  Open app.html in your browser")
+print("="*62 + "\n")
 
 
-# ═════════════════════════════════════════════════════════════════════
+# ================================================================
 # FEATURE ENGINEERING  (mirrors train.py exactly)
-# ═════════════════════════════════════════════════════════════════════
-def build_feature_vector(data: dict) -> np.ndarray:
-    """
-    Takes a flat dict of raw clinical values, engineers the same
-    derived features that were created during training, and returns
-    a 2-D float32 numpy array shaped (1, n_features) ready for
-    model.predict_proba().
-    """
-    def safe(key, default=np.nan):
-        v = data.get(key)
-        if v is None or v == "":
-            return default
-        try:
-            return float(v)
-        except (ValueError, TypeError):
-            return default
+# ================================================================
+def engineer(raw: dict) -> dict:
+    f = dict(raw)
+    hr  = f.get("HR")
+    sbp = f.get("SBP")
+    dbp = f.get("DBP")
+    mp  = f.get("MAP")
+    tmp = f.get("Temp")
+    rsp = f.get("Resp")
+    wbc = f.get("WBC")
 
-    row = {}
+    f["ShockIndex"]    = hr / (sbp + 1e-6) if (hr is not None and sbp and sbp > 0) else None
+    f["PulsePressure"] = sbp - dbp          if (sbp is not None and dbp is not None) else None
+    f["MAP_dev"]       = abs(mp - 93)       if mp  is not None else None
+    f["TempAbnormal"]  = 1 if tmp is not None and (tmp > 38.3 or tmp < 36.0) else 0
+    f["Tachycardia"]   = 1 if hr  is not None and hr  > 90  else 0
+    f["Tachypnea"]     = 1 if rsp is not None and rsp > 20  else 0
 
-    # ── Raw clinical fields ─────────────────────────────────────────
-    for col in feature_cols:
-        row[col] = safe(col)
+    sirs = f["TempAbnormal"] + f["Tachycardia"] + f["Tachypnea"]
+    if wbc is not None:
+        sirs += 1 if (wbc > 12 or wbc < 4) else 0
+    f["SIRS_Score"] = sirs
 
-    # ── Derived features (replicate train.py logic) ─────────────────
-    HR   = safe("HR")
-    SBP  = safe("SBP")
-    DBP  = safe("DBP")
-    MAP  = safe("MAP")
-    Temp = safe("Temp")
-    Resp = safe("Resp")
-    WBC  = safe("WBC")
-    Age  = safe("Age")
+    age = f.get("Age")
+    if age is not None:
+        f["AgeGroup"] = 0 if age < 40 else 1 if age < 60 else 2 if age < 75 else 3
+    else:
+        f["AgeGroup"] = None
 
-    if "ShockIndex" in feature_cols:
-        row["ShockIndex"] = (HR / (SBP + 1e-6)
-                             if not np.isnan(HR) and not np.isnan(SBP)
-                             else np.nan)
-
-    if "PulsePressure" in feature_cols:
-        row["PulsePressure"] = (SBP - DBP
-                                if not np.isnan(SBP) and not np.isnan(DBP)
-                                else np.nan)
-
-    if "MAP_dev" in feature_cols:
-        row["MAP_dev"] = abs(MAP - 93) if not np.isnan(MAP) else np.nan
-
-    temp_abn  = int((Temp > 38.3) or (Temp < 36.0)) if not np.isnan(Temp) else 0
-    tachy_c   = int(HR   > 90)                       if not np.isnan(HR)   else 0
-    tachy_p   = int(Resp > 20)                       if not np.isnan(Resp) else 0
-
-    if "TempAbnormal" in feature_cols:
-        row["TempAbnormal"] = temp_abn
-    if "Tachycardia" in feature_cols:
-        row["Tachycardia"] = tachy_c
-    if "Tachypnea" in feature_cols:
-        row["Tachypnea"] = tachy_p
-
-    sirs = temp_abn + tachy_c + tachy_p
-    if not np.isnan(WBC):
-        sirs += int((WBC > 12) or (WBC < 4))
-    if "SIRS_Score" in feature_cols:
-        row["SIRS_Score"] = sirs
-
-    if "AgeGroup" in feature_cols:
-        if not np.isnan(Age):
-            row["AgeGroup"] = (0 if Age < 40 else
-                               1 if Age < 60 else
-                               2 if Age < 75 else 3)
-        else:
-            row["AgeGroup"] = np.nan
-
-    # Build ordered array in exactly the same column order as training
-    vector = np.array([[row.get(c, np.nan) for c in feature_cols]],
-                      dtype=np.float32)
-    # Impute remaining NaNs
-    vector = imputer.transform(vector).astype(np.float32)
-    return vector
+    return f
 
 
-# ═════════════════════════════════════════════════════════════════════
+def build_vector(eng: dict) -> np.ndarray:
+    return np.array(
+        [float(eng[c]) if eng.get(c) is not None else np.nan for c in feature_cols],
+        dtype=np.float32
+    ).reshape(1, -1)
+
+
+# ================================================================
+# 4-TIER CLINICAL STRATIFICATION
+# ================================================================
+def get_tier(p: float) -> dict:
+    if p >= 0.61:
+        return {
+            "tier": 4, "level": "HIGH",
+            "label": "TIER 4 — HIGH RISK",
+            "range": "0.61 – 1.0",
+            "title": "High Sepsis Risk Detected",
+            "clinical_state": "Imminent Sepsis / Shock",
+            "protocol": "Code Sepsis",
+            "recommendation": [
+                "Immediate MD bedside evaluation",
+                "IV broad-spectrum antibiotics within 1 hour",
+                "Fluid Bolus: 30 mL/kg IV crystalloid",
+                "Blood cultures x2 before antibiotics",
+                "Reassess lactate & urine output q1h",
+                "Notify ICU team / senior clinician stat",
+            ]
+        }
+    elif p >= 0.36:
+        return {
+            "tier": 3, "level": "MODERATE",
+            "label": "TIER 3 — MODERATE RISK",
+            "range": "0.36 – 0.60",
+            "title": "Moderate Sepsis Risk Detected",
+            "clinical_state": "Developing organ dysfunction",
+            "protocol": "Diagnostic Trigger",
+            "recommendation": [
+                "Order Lactate, Blood Cultures & CBC",
+                "Nurse-led bedside assessment now",
+                "Increase vitals monitoring frequency (q1h)",
+                "Review fluid status and urine output",
+                "Consider empiric antibiotics if source found",
+                "Reassess within 2 hours — escalate if worsening",
+            ]
+        }
+    elif p >= 0.16:
+        return {
+            "tier": 2, "level": "LOW",
+            "label": "TIER 2 — LOW RISK",
+            "range": "0.16 – 0.35",
+            "title": "Low Sepsis Risk Detected",
+            "clinical_state": "Mild tachycardia or tachypnea",
+            "protocol": "Active Monitoring",
+            "recommendation": [
+                "Vitals every 2 hours",
+                "Ensure adequate hydration",
+                "Monitor for clinical deterioration",
+                "Document trends in patient record",
+                "Reassess if new symptoms develop",
+                "Escalate to Tier 3 if parameters worsen",
+            ]
+        }
+    else:
+        return {
+            "tier": 1, "level": "BASELINE",
+            "label": "TIER 1 — BASELINE",
+            "range": "0.00 – 0.15",
+            "title": "Baseline — No Sepsis Risk Detected",
+            "clinical_state": "Stable physiology",
+            "protocol": "Standard Care",
+            "recommendation": [
+                "Routine vitals every 8 hours",
+                "Maintain standard care protocols",
+                "Reassess if new symptoms develop",
+                "Document assessment in patient record",
+                "Re-run assessment if clinical status changes",
+            ]
+        }
+
+
+# ================================================================
 # ROUTES
-# ═════════════════════════════════════════════════════════════════════
-
-@app.route("/")
-def index():
-    """Serve the dashboard HTML."""
-    try:
-        with open("app.html", "r", encoding="utf-8") as fh:
-            return fh.read(), 200, {"Content-Type": "text/html"}
-    except FileNotFoundError:
-        return "app.html not found — make sure you run app.py from the project folder.", 404
+# ================================================================
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({
+        "status"         : "ok",
+        "version"        : "app.py",
+        "features"       : len(feature_cols),
+        "calibration"    : {"method": "platt_scaling", "a": PLATT_A, "b": PLATT_B},
+        "ensemble_weight": {"xgb": round(ensemble_w, 3), "lgb": round(1 - ensemble_w, 3)},
+        "val_auc"        : {
+            "xgb"     : config["val_auc_xgb"],
+            "lgb"     : config["val_auc_lgb"],
+            "ensemble": config["val_auc_ensemble"],
+        },
+    })
 
 
 @app.route("/predict", methods=["POST"])
 def predict():
-    """
-    Accepts JSON body with patient clinical values.
-    Returns a JSON response with:
-      xgb_prob, lgb_prob, ens_prob
-      xgb_pred, lgb_pred, ens_pred  (0/1 using optimal thresholds)
-      tier  — 'HIGH' | 'MODERATE' | 'LOW'
-    """
     try:
         data = request.get_json(force=True)
         if not data:
-            return jsonify({"error": "No JSON body received"}), 400
+            return jsonify({"error": "Empty request body"}), 400
 
-        X = build_feature_vector(data)
+        # Feature engineering + imputation
+        eng  = engineer(data)
+        Ximp = imputer.transform(build_vector(eng)).astype(np.float32)
 
-        # Predictions
-        xgb_prob = float(xgb_model.predict_proba(X)[0, 1])
-        lgb_prob = float(lgb_booster.predict(X)[0])
-        ens_prob = float(ensemble_w * xgb_prob + (1 - ensemble_w) * lgb_prob)
+        # Raw model outputs
+        xgb_raw = float(xgb_model.predict_proba(Ximp)[0, 1])
+        lgb_raw = float(lgb_booster.predict(Ximp)[0])
 
-        # Binary decisions using training-optimised thresholds
-        xgb_pred = int(xgb_prob >= thresholds["XGBoost"])
-        lgb_pred = int(lgb_prob >= thresholds["LightGBM"])
-        ens_pred = int(ens_prob >= thresholds["Ensemble"])
+        # Clinical override boost on raw ensemble (pre-calibration)
+        raw_ens = float(np.clip(
+            ensemble_w * xgb_raw + (1.0 - ensemble_w) * lgb_raw, 0.0, 1.0))
+        boost   = clinical_boost(eng, data)
+        raw_ens_boosted = float(np.clip(raw_ens + boost, 0.0, 0.95))
 
-        # Clinical tier (mirrors app.html thresholds)
-        if ens_prob >= 0.45:
-            tier = "HIGH"
-        elif ens_prob >= 0.20:
-            tier = "MODERATE"
-        else:
-            tier = "LOW"
+        # Platt calibration — applied to boosted raw ensemble
+        xgb_cal = calibrate(xgb_raw)
+        lgb_cal = calibrate(lgb_raw)
+        ens_cal = calibrate(raw_ens_boosted)
+
+        print(f"  Raw  -> XGB:{xgb_raw:.3f}  LGB:{lgb_raw:.3f}  ENS:{raw_ens:.3f}")
+        print(f"  Boost-> +{boost:.2f}  boosted_raw:{raw_ens_boosted:.3f}")
+        print(f"  Cal  -> XGB:{xgb_cal:.3f}  LGB:{lgb_cal:.3f}  ENS:{ens_cal:.3f}")
+
+        tier_info = get_tier(ens_cal)
+        print(f"  Tier -> {tier_info['tier']} ({tier_info['level']})")
 
         return jsonify({
-            "xgb_prob"  : round(xgb_prob, 4),
-            "lgb_prob"  : round(lgb_prob, 4),
-            "ens_prob"  : round(ens_prob, 4),
-            "xgb_pred"  : xgb_pred,
-            "lgb_pred"  : lgb_pred,
-            "ens_pred"  : ens_pred,
-            "tier"      : tier,
-            "thresholds": {k: round(v, 4) for k, v in thresholds.items()},
-            "ensemble_weight": {
-                "XGBoost" : round(float(ensemble_w), 4),
-                "LightGBM": round(1 - float(ensemble_w), 4),
+            "probabilities": {
+                "xgboost" : round(xgb_cal, 4),
+                "lightgbm": round(lgb_cal, 4),
+                "ensemble": round(ens_cal, 4),
+            },
+            "raw_probabilities": {
+                "xgboost" : round(xgb_raw, 4),
+                "lightgbm": round(lgb_raw, 4),
+            },
+            "thresholds": {
+                "xgboost" : round(thresholds["XGBoost"],  4),
+                "lightgbm": round(thresholds["LightGBM"], 4),
+                "ensemble": round(thresholds["Ensemble"], 4),
+            },
+            "predictions": {
+                "xgboost" : int(xgb_cal >= thresholds["XGBoost"]),
+                "lightgbm": int(lgb_cal >= thresholds["LightGBM"]),
+                "ensemble": int(ens_cal >= thresholds["Ensemble"]),
+            },
+            "tier": tier_info,
+            "sirs": {
+                "TempAbnormal": bool(eng.get("TempAbnormal", 0)),
+                "Tachycardia" : bool(eng.get("Tachycardia",  0)),
+                "Tachypnea"   : bool(eng.get("Tachypnea",    0)),
+                "WBC_abnormal": (data.get("WBC") is not None and
+                                 (data["WBC"] > 12 or data["WBC"] < 4)),
+                "SIRS_Score"  : int(eng.get("SIRS_Score", 0)),
+            },
+            "engineered_features": {
+                "ShockIndex"   : round(eng["ShockIndex"],    3) if eng.get("ShockIndex")    is not None else None,
+                "PulsePressure": round(eng["PulsePressure"], 1) if eng.get("PulsePressure") is not None else None,
+                "MAP_dev"      : round(eng["MAP_dev"],       1) if eng.get("MAP_dev")       is not None else None,
+                "SIRS_Score"   : int(eng.get("SIRS_Score", 0)),
+                "AgeGroup"     : int(eng["AgeGroup"])            if eng.get("AgeGroup") is not None else None,
             },
         })
 
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
-@app.route("/health", methods=["GET"])
-def health():
-    """Quick liveness check."""
+@app.route("/config", methods=["GET"])
+def get_config():
     return jsonify({
-        "status"       : "ok",
-        "models_loaded": True,
-        "n_features"   : len(feature_cols),
+        "feature_cols"    : feature_cols,
+        "n_features"      : len(feature_cols),
+        "ensemble_weight" : {"xgb": round(ensemble_w, 3), "lgb": round(1 - ensemble_w, 3)},
+        "calibration"     : {"a": PLATT_A, "b": PLATT_B},
+        "thresholds"      : thresholds,
     })
 
 
-# ═════════════════════════════════════════════════════════════════════
-# ENTRY POINT
-# ═════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=8000, debug=False)

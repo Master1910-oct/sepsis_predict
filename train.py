@@ -257,11 +257,16 @@ X_val   = imputer.transform(X_val).astype(np.float32)
 gc.collect()
 
 # ── Class weight ─────────────────────────────────────────────────────────
+# IMPORTANT: Raw imbalance ratio is ~54 but using full value causes models
+# to over-weight positive class and output saturated probabilities for
+# even mild cases. Capping at 10 preserves sensitivity while keeping
+# raw probability outputs spread across the full 0-1 range.
 n_neg = int((y_train == 0).sum())
 n_pos = int((y_train == 1).sum())
-scale_pos_weight = n_neg / n_pos
-print(f"\n  scale_pos_weight : {scale_pos_weight:.2f}  "
-      f"(neg={n_neg:,}  pos={n_pos:,})")
+raw_spw = n_neg / n_pos
+scale_pos_weight = min(raw_spw, 10.0)   # cap at 10 — prevents prob saturation
+print(f"\n  Raw imbalance ratio : {raw_spw:.1f}")
+print(f"  scale_pos_weight    : {scale_pos_weight:.2f}  (capped at 10 for calibration)")
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -272,20 +277,20 @@ print("  [4/6]  Training XGBoost …")
 print("═"*65)
 
 xgb_model = xgb.XGBClassifier(
-    n_estimators          = 500,
-    max_depth             = 6,
+    n_estimators          = 600,
+    max_depth             = 7,          # +1 depth: capture organ-failure interactions
     learning_rate         = 0.05,
     subsample             = 0.80,
     colsample_bytree      = 0.80,
-    min_child_weight      = 10,
-    gamma                 = 1,
-    reg_alpha             = 0.1,
+    min_child_weight      = 5,          # lower: allows rarer severe patterns to split
+    gamma                 = 0.5,        # lower: less pruning, catches severe cases
+    reg_alpha             = 0.05,
     reg_lambda            = 1.0,
     scale_pos_weight      = scale_pos_weight,
-    tree_method           = "hist",       # fast + low RAM
+    tree_method           = "hist",
     device                = "cpu",
     n_jobs                = -1,
-    early_stopping_rounds = 20,
+    early_stopping_rounds = 30,         # more patience
     eval_metric           = "aucpr",
     random_state          = 42,
     verbosity             = 0,
@@ -316,15 +321,15 @@ print("  [5/6]  Training LightGBM …")
 print("═"*65)
 
 lgb_model = lgb.LGBMClassifier(
-    n_estimators      = 500,
-    max_depth         = 6,
-    num_leaves        = 63,
+    n_estimators      = 600,
+    max_depth         = 7,
+    num_leaves        = 80,             # more leaves: richer splits for severity
     learning_rate     = 0.05,
     subsample         = 0.80,
     subsample_freq    = 1,
     colsample_bytree  = 0.80,
-    min_child_samples = 50,
-    reg_alpha         = 0.1,
+    min_child_samples = 20,             # lower: detect rare severe sepsis patterns
+    reg_alpha         = 0.05,
     reg_lambda        = 1.0,
     scale_pos_weight  = scale_pos_weight,
     n_jobs            = -1,
@@ -363,8 +368,10 @@ print("  [6/6]  Optimising Ensemble & Saving Models …")
 print("═"*65)
 
 # Find best ensemble weight on validation set
+# Search range 0.2-0.8 — prevents degenerate 1.0/0.0 weight that
+# throws away one model entirely and kills probability diversity
 best_w, best_auc_ens = 0.5, 0.0
-for w in np.arange(0.0, 1.01, 0.05):
+for w in np.arange(0.20, 0.81, 0.05):
     auc = roc_auc_score(y_val, w * xgb_val_prob + (1 - w) * lgb_val_prob)
     if auc > best_auc_ens:
         best_auc_ens, best_w = auc, w
@@ -388,6 +395,15 @@ print(f"  Val AUC (Ensemble) : {best_auc_ens:.4f}")
 print(f"  Thresholds → XGBoost:{thresholds['XGBoost']:.4f}  "
       f"LightGBM:{thresholds['LightGBM']:.4f}  "
       f"Ensemble:{thresholds['Ensemble']:.4f}")
+
+# ── Post-training probability distribution check ─────────────────────
+# Verify raw probs span the full range — key sign of healthy calibration
+print(f"\n  Raw probability distribution on val set:")
+for model_nm, probs in [("XGBoost", xgb_val_prob), ("LightGBM", lgb_val_prob), ("Ensemble", ens_val_prob)]:
+    p10, p25, p50, p75, p90 = np.percentile(probs, [10, 25, 50, 75, 90])
+    pct_high = (probs > 0.5).mean() * 100
+    print(f"  {model_nm:<12}: p10={p10:.3f} p25={p25:.3f} p50={p50:.3f} "
+          f"p75={p75:.3f} p90={p90:.3f}  >0.5: {pct_high:.1f}%")
 
 # Save all artefacts
 xgb_model.save_model(f"{MODEL_DIR}/xgb_model.json")
