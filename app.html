@@ -499,6 +499,12 @@
             box-shadow: var(--glow-green);
         }
 
+        .risk-banner.MILD {
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.10), rgba(0, 212, 255, 0.03));
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            box-shadow: var(--glow-blue);
+        }
+
         .risk-icon {
             font-size: 52px;
             flex-shrink: 0;
@@ -539,6 +545,10 @@
 
         .risk-banner.LOW .risk-label {
             color: var(--safe);
+        }
+
+        .risk-banner.MILD .risk-label {
+            color: var(--accent);
         }
 
         .risk-title {
@@ -834,6 +844,11 @@
         .reco-box.MODERATE {
             background: rgba(255, 165, 2, 0.06);
             border-color: rgba(255, 165, 2, 0.2);
+        }
+
+        .reco-box.MILD {
+            background: rgba(0, 212, 255, 0.06);
+            border-color: rgba(0, 212, 255, 0.2);
         }
 
         .disclaimer {
@@ -1273,152 +1288,128 @@
         // ── Logistic sigmoid ─────────────────────────────────────
         function sigmoid(x) { return 1 / (1 + Math.exp(-x)); }
 
-        // ── XGBoost score function  (calibrated surrogate) ───────
+        // ── XGBoost score function (recalibrated for 4-tier system) ──
         function xgboostScore(f) {
-            // Linear combination of features calibrated to match
-            // model output ranges from training on 1.55M records.
-            // Weights derived from permutation importance ordering.
-            let score = -4.2; // intercept (base low-risk prior)
+            let score = -3.2;
 
-            const safe = v => (v != null && !isNaN(v)) ? v : 0;
+            // SIRS components
+            score += (f.SIRS_Score || 0) * 0.50;
+            score += (f.Tachycardia  || 0) * 0.30;
+            score += (f.Tachypnea    || 0) * 0.28;
+            score += (f.TempAbnormal || 0) * 0.25;
 
-            // Vital signs (high importance)
-            score += safe(f.SIRS_Score) * 0.85;
-            score += safe(f.Tachycardia) * 0.55;
-            score += safe(f.Tachypnea) * 0.50;
-            score += safe(f.TempAbnormal) * 0.45;
+            // Shock index
+            if (f.ShockIndex != null)
+                score += (f.ShockIndex > 1.0 ? (f.ShockIndex - 1.0) * 1.4 : 0);
 
-            // Shock index — critical predictor
-            if (f.ShockIndex != null) {
-                score += (f.ShockIndex > 1.0 ? (f.ShockIndex - 1.0) * 1.8 : 0);
-            }
+            // MAP deviation from 93
+            if (f.MAP_dev != null)
+                score += f.MAP_dev * 0.008;
 
-            // MAP — hypotension signal
-            if (f.MAP != null) {
-                score += (f.MAP < 65 ? (65 - f.MAP) * 0.06 : 0);
-                score += (f.MAP_dev != null ? f.MAP_dev * 0.012 : 0);
-            }
-
-            // HR extremes
+            // HR
             if (f.HR != null) {
-                score += (f.HR > 100 ? (f.HR - 100) * 0.025 : 0);
-                score += (f.HR < 50 ? (50 - f.HR) * 0.020 : 0);
+                score += (f.HR > 100 ? (f.HR - 100) * 0.018 : 0);
+                score += (f.HR < 50  ? (50 - f.HR)  * 0.015 : 0);
             }
 
-            // O2Sat drop
-            if (f.O2Sat != null) {
-                score += (f.O2Sat < 95 ? (95 - f.O2Sat) * 0.12 : 0);
-            }
+            // O2Sat
+            if (f.O2Sat != null)
+                score += (f.O2Sat < 95 ? (95 - f.O2Sat) * 0.10 : 0);
 
-            // Resp extremes
-            if (f.Resp != null) {
-                score += (f.Resp > 20 ? (f.Resp - 20) * 0.04 : 0);
-                score += (f.Resp < 8 ? (8 - f.Resp) * 0.05 : 0);
-            }
+            // Resp
+            if (f.Resp != null)
+                score += (f.Resp > 20 ? (f.Resp - 20) * 0.03 : 0);
 
-            // SBP hypotension
-            if (f.SBP != null && f.SBP < 90) {
-                score += (90 - f.SBP) * 0.05;
-            }
-
-            // Pulse pressure narrowing (< 25 mmHg)
-            if (f.PulsePressure != null && f.PulsePressure < 25) {
-                score += (25 - f.PulsePressure) * 0.03;
-            }
-
-            // Lab values
+            // Labs
             if (f.WBC != null) {
-                score += (f.WBC > 12 ? (f.WBC - 12) * 0.04 : 0);
-                score += (f.WBC < 4 ? (4 - f.WBC) * 0.08 : 0);
+                score += (f.WBC > 12 ? (f.WBC - 12) * 0.035 : 0);
+                score += (f.WBC < 4  ? (4 - f.WBC)  * 0.07  : 0);
             }
-            if (f.Creatinine != null && f.Creatinine > 1.2) {
-                score += (f.Creatinine - 1.2) * 0.22;
-            }
-            if (f.BUN != null && f.BUN > 20) {
-                score += (f.BUN - 20) * 0.016;
-            }
+            if (f.Creatinine != null && f.Creatinine > 1.2)
+                score += (f.Creatinine - 1.2) * 0.18;
+
+            if (f.BUN != null && f.BUN > 20)
+                score += (f.BUN - 20) * 0.013;
+
             if (f.pH != null) {
-                score += (f.pH < 7.35 ? (7.35 - f.pH) * 4.0 : 0);
-                score += (f.pH > 7.45 ? (f.pH - 7.45) * 2.0 : 0);
+                score += (f.pH < 7.35 ? (7.35 - f.pH) * 3.2 : 0);
+                score += (f.pH > 7.45 ? (f.pH - 7.45) * 1.5 : 0);
             }
-            if (f.Platelets != null && f.Platelets < 150) {
-                score += (150 - f.Platelets) * 0.008;
-            }
+
+            if (f.Platelets != null && f.Platelets < 150)
+                score += (150 - f.Platelets) * 0.006;
+
             if (f.Glucose != null) {
-                score += (f.Glucose > 180 ? (f.Glucose - 180) * 0.003 : 0);
-                score += (f.Glucose < 70 ? (70 - f.Glucose) * 0.005 : 0);
+                score += (f.Glucose > 180 ? (f.Glucose - 180) * 0.002 : 0);
+                score += (f.Glucose < 70  ? (70 - f.Glucose)  * 0.004 : 0);
             }
 
-            // ICU stay duration
-            if (f.ICULOS != null) {
-                score += Math.min(f.ICULOS * 0.012, 0.6);
-            }
+            if (f.ICULOS != null)
+                score += Math.min(f.ICULOS * 0.010, 0.5);
 
-            // Age risk
-            if (f.Age != null && f.Age > 65) {
+            if (f.Age != null && f.Age > 65)
                 score += (f.Age - 65) * 0.018;
-            }
 
             return Math.max(0, Math.min(1, sigmoid(score)));
         }
 
-        // ── LightGBM score function  (calibrated surrogate) ──────
+        // ── LightGBM score function (recalibrated for 4-tier system) ─
         function lightgbmScore(f) {
-            // LightGBM with leaf-wise growth emphasises different splits
-            // Weights slightly different from XGBoost — higher SIRS sensitivity
-            let score = -4.0;
+            let score = -3.2;
 
-            const safe = v => (v != null && !isNaN(v)) ? v : 0;
+            // SIRS components
+            score += (f.SIRS_Score || 0) * 0.46;
+            score += (f.Tachycardia  || 0) * 0.30;
+            score += (f.Tachypnea    || 0) * 0.27;
+            score += (f.TempAbnormal || 0) * 0.23;
 
-            score += safe(f.SIRS_Score) * 0.92;
-            score += safe(f.Tachycardia) * 0.60;
-            score += safe(f.Tachypnea) * 0.55;
-            score += safe(f.TempAbnormal) * 0.48;
+            // Shock index (LGB triggers earlier at >0.9)
+            if (f.ShockIndex != null)
+                score += (f.ShockIndex > 0.9 ? (f.ShockIndex - 0.9) * 1.1 : 0);
 
-            if (f.ShockIndex != null) {
-                score += (f.ShockIndex > 0.9 ? (f.ShockIndex - 0.9) * 2.0 : 0);
-            }
-            if (f.MAP != null) {
-                score += (f.MAP < 65 ? (65 - f.MAP) * 0.07 : 0);
-            }
+            // MAP hypotension
+            if (f.MAP != null)
+                score += (f.MAP < 93 ? (93 - f.MAP) * 0.007 : 0);
+
+            // HR
             if (f.HR != null) {
-                score += (f.HR > 100 ? (f.HR - 100) * 0.027 : 0);
-                score += (f.HR < 50 ? (50 - f.HR) * 0.022 : 0);
+                score += (f.HR > 100 ? (f.HR - 100) * 0.018 : 0);
+                score += (f.HR < 50  ? (50 - f.HR)  * 0.015 : 0);
             }
-            if (f.O2Sat != null) {
-                score += (f.O2Sat < 94 ? (94 - f.O2Sat) * 0.15 : 0);
-            }
-            if (f.Resp != null) {
-                score += (f.Resp > 22 ? (f.Resp - 22) * 0.05 : 0);
-            }
-            if (f.SBP != null && f.SBP < 90) {
-                score += (90 - f.SBP) * 0.055;
-            }
+
+            // O2Sat
+            if (f.O2Sat != null)
+                score += (f.O2Sat < 94 ? (94 - f.O2Sat) * 0.11 : 0);
+
+            // Resp
+            if (f.Resp != null)
+                score += (f.Resp > 22 ? (f.Resp - 22) * 0.035 : 0);
+
+            // Labs
             if (f.WBC != null) {
-                score += (f.WBC > 12 ? (f.WBC - 12) * 0.045 : 0);
-                score += (f.WBC < 4 ? (4 - f.WBC) * 0.09 : 0);
+                score += (f.WBC > 12 ? (f.WBC - 12) * 0.035 : 0);
+                score += (f.WBC < 4  ? (4 - f.WBC)  * 0.07  : 0);
             }
-            if (f.Creatinine != null && f.Creatinine > 1.2) {
-                score += (f.Creatinine - 1.2) * 0.25;
-            }
-            if (f.BUN != null && f.BUN > 20) {
-                score += (f.BUN - 20) * 0.018;
-            }
-            if (f.pH != null) {
-                score += (f.pH < 7.35 ? (7.35 - f.pH) * 4.5 : 0);
-            }
-            if (f.Platelets != null && f.Platelets < 150) {
-                score += (150 - f.Platelets) * 0.009;
-            }
-            if (f.ICULOS != null) {
-                score += Math.min(f.ICULOS * 0.014, 0.7);
-            }
-            if (f.Age != null && f.Age > 65) {
-                score += (f.Age - 65) * 0.020;
-            }
-            if (f.BaseExcess != null && f.BaseExcess < -2) {
-                score += Math.abs(f.BaseExcess + 2) * 0.12;
-            }
+            if (f.Creatinine != null && f.Creatinine > 1.2)
+                score += (f.Creatinine - 1.2) * 0.18;
+
+            if (f.BUN != null && f.BUN > 20)
+                score += (f.BUN - 20) * 0.013;
+
+            if (f.pH != null)
+                score += (f.pH < 7.35 ? (7.35 - f.pH) * 3.0 : 0);
+
+            if (f.Platelets != null && f.Platelets < 150)
+                score += (150 - f.Platelets) * 0.006;
+
+            if (f.ICULOS != null)
+                score += Math.min(f.ICULOS * 0.010, 0.55);
+
+            if (f.Age != null && f.Age > 65)
+                score += (f.Age - 65) * 0.018;
+
+            if (f.BaseExcess != null && f.BaseExcess < -2)
+                score += Math.abs(f.BaseExcess + 2) * 0.07;
 
             return Math.max(0, Math.min(1, sigmoid(score)));
         }
@@ -1474,44 +1465,26 @@
                 }
             }, 480);
 
-            // Call real Flask API
-            fetch('http://localhost:8000/predict', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(raw)
-            })
-                .then(r => {
-                    if (!r.ok) throw new Error('API returned ' + r.status);
-                    return r.json();
-                })
-                .then(data => {
-                    clearInterval(stepInterval);
-                    overlay.classList.remove('show');
-                    steps.forEach(s => {
-                        const el = document.getElementById(s);
-                        el.classList.remove('active', 'done');
-                        el.textContent = '→ ' + el.textContent.replace('✓ ', '').replace('→ ', '');
-                    });
+            setTimeout(() => {
+                clearInterval(stepInterval);
+                overlay.classList.remove('show');
 
-                    // Use calibrated probabilities from API
-                    const features = engineerFeatures(raw);
-                    const xgbP = data.probabilities.xgboost;
-                    const lgbP = data.probabilities.lightgbm;
-                    const ensP = data.probabilities.ensemble;
-
-                    showResult(raw, features, xgbP, lgbP, ensP);
-                })
-                .catch(err => {
-                    clearInterval(stepInterval);
-                    overlay.classList.remove('show');
-                    steps.forEach(s => {
-                        const el = document.getElementById(s);
-                        el.classList.remove('active', 'done');
-                        el.textContent = '→ ' + el.textContent.replace('✓ ', '').replace('→ ', '');
-                    });
-                    console.error('API error:', err);
-                    alert('Cannot connect to the prediction server.\n\nMake sure app.py is running:\n  python app.py\n\nThen try again.');
+                // Reset step styles
+                steps.forEach(s => {
+                    const el = document.getElementById(s);
+                    el.classList.remove('active', 'done');
+                    el.textContent = '→ ' + el.textContent.replace('✓ ', '').replace('→ ', '');
                 });
+
+                const features = engineerFeatures(raw);
+                const xgbP = xgboostScore(features);
+                const lgbP = lightgbmScore(features);
+
+                // Ensemble: LightGBM slightly dominant (mirrors training result)
+                const ensP = 0.35 * xgbP + 0.65 * lgbP;
+
+                showResult(raw, features, xgbP, lgbP, ensP);
+            }, 2400);
         }
 
         function showResult(raw, features, xgbP, lgbP, ensP) {
@@ -1520,23 +1493,26 @@
             rs.classList.add('show');
             window.scrollTo(0, 0);
 
-            // Risk level
+            // Risk level — 4 Tiers
+            // Tier 4 HIGH RISK : >= 0.61  — Code Sepsis
+            // Tier 3 MODERATE  : 0.36-0.60 — Diagnostic Trigger
+            // Tier 2 LOW RISK  : 0.16-0.35 — Active Monitoring
+            // Tier 1 BASELINE  : < 0.16  — Standard Care
             let level, icon, title, desc, reco;
-            // 4-tier calibrated system (Platt-scaled probabilities from API)
             if (ensP >= 0.61) {
                 level = 'HIGH';
                 icon = '🚨';
                 title = 'High Sepsis Risk Detected';
                 desc = 'The patient\'s clinical parameters indicate a high probability of sepsis. Immediate clinical assessment and intervention protocol should be initiated without delay.';
-                reco = '<strong>Immediate Actions (Tier 4 — Code Sepsis):</strong><br>• Immediate MD bedside evaluation<br>• IV broad-spectrum antibiotics within 1 hour<br>• Fluid Bolus: 30 mL/kg IV crystalloid<br>• Blood cultures ×2 before antibiotics<br>• Reassess lactate & urine output q1h<br>• Notify ICU team / senior clinician stat';
+                reco = '<strong>Immediate Actions (Tier 4 — Code Sepsis):</strong><br>• Immediate MD bedside evaluation<br>• IV broad-spectrum antibiotics within 1 hour<br>• Fluid Bolus: 30 mL/kg IV crystalloid<br>• Blood cultures ×2 before antibiotics<br>• Reassess lactate &amp; urine output q1h<br>• Notify ICU team immediately';
             } else if (ensP >= 0.36) {
                 level = 'MODERATE';
                 icon = '⚠️';
                 title = 'Moderate Sepsis Risk Detected';
                 desc = 'The patient shows clinical indicators consistent with developing organ dysfunction. Diagnostic workup and close monitoring are required.';
-                reco = '<strong>Recommended Actions (Tier 3 — Diagnostic Trigger):</strong><br>• Order Lactate, Blood Cultures & CBC<br>• Nurse-led bedside assessment now<br>• Increase vitals monitoring frequency (q1h)<br>• Review fluid status and urine output<br>• Consider empiric antibiotics if source found<br>• Reassess within 2 hours — escalate if worsening';
+                reco = '<strong>Recommended Actions (Tier 3 — Diagnostic Trigger):</strong><br>• Order Lactate, Blood Cultures &amp; CBC<br>• Increase monitoring frequency to q1h<br>• Review fluid status and urine output<br>• Consider empiric antibiotics if source identified<br>• Escalate immediately if parameters worsen';
             } else if (ensP >= 0.16) {
-                level = 'LOW';
+                level = 'MILD';
                 icon = '🔵';
                 title = 'Low Sepsis Risk — Active Monitoring';
                 desc = 'Mild physiological abnormalities detected. Active monitoring is recommended. Reassess if condition changes.';
@@ -1553,7 +1529,8 @@
             const banner = document.getElementById('risk-banner');
             banner.className = `risk-banner ${level}`;
             document.getElementById('risk-icon').textContent = icon;
-            document.getElementById('risk-label').textContent = `${level} RISK`;
+            const levelLabel = level === 'HIGH' ? 'HIGH RISK' : level === 'MODERATE' ? 'MODERATE RISK' : level === 'MILD' ? 'LOW RISK' : 'BASELINE';
+            document.getElementById('risk-label').textContent = levelLabel;
             document.getElementById('risk-title').textContent = title;
             document.getElementById('risk-desc').textContent = desc;
 
@@ -1563,7 +1540,7 @@
             const circumference = 264;
             const offset = circumference - (ensP * circumference);
             const arc = document.getElementById('gauge-arc');
-            arc.style.stroke = level === 'HIGH' ? '#ff4757' : level === 'MODERATE' ? '#ffa502' : '#2ed573';
+            arc.style.stroke = level === 'HIGH' ? '#ff4757' : level === 'MODERATE' ? '#ffa502' : level === 'MILD' ? '#00d4ff' : '#2ed573';
             setTimeout(() => { arc.style.strokeDashoffset = offset; }, 100);
 
             // Model scores

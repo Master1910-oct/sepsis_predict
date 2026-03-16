@@ -19,3 +19,5 @@ sepsis_train_outputs/
 
 # Logs
 *.log
+
+app1.py
